@@ -246,6 +246,9 @@ def run_training(args: argparse.Namespace) -> None:
         train_ds, val_ds, train_names, val_names, _ = build_split_datasets(
             cache_in_ram=args.cache_in_ram, augment=args.augment, denoised_dir=dn_dir,
             red_line_p=getattr(args, "red_line_aug", 0.0),
+            faint_p=getattr(args, "faint_aug", 0.0), cutout_p=getattr(args, "cutout", 0.0),
+            render_p=getattr(args, "render_aug", 0.0),
+            occlude_p=getattr(args, "occlude_aug", 0.0),
         )
         if getattr(args, "synth_frac", 0.0) > 0:
             from dataset import SynthDataset
@@ -332,6 +335,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--concat-denoised", action="store_true", help="6ch input: original + denoised (use with --model v2hi6)")
     parser.add_argument("--red-line-aug", type=float, default=0.0, help="prob of overlaying synthetic red lines (robustness)")
     parser.add_argument("--synth-frac", type=float, default=0.0, help="fraction of procedural synthetic samples to mix into training")
+    parser.add_argument("--faint-aug", type=float, default=0.0, help="prob of faint/uneven-red gradient fade (robustness)")
+    parser.add_argument("--cutout", type=float, default=0.0, help="prob of cutout occlusion (robustness)")
+    parser.add_argument("--render-aug", type=float, default=0.0,
+                        help="prob of render degradation (blur+resolution loss); robustifies the COLOUR head "
+                             "to the softer-rendered test distribution (red/non-red under blur/faint red)")
+    parser.add_argument("--occlude-aug", type=float, default=0.0,
+                        help="prob of arbitrary-colour (incl dark/red) occluding lines; robustifies the COLOUR "
+                             "head against red interference lines crossing a NON-red char (false-positive red)")
     parser.add_argument("--seed", type=int, default=config.SEED, help="global seed for init/shuffle/aug; val split stays fixed")
     parser.add_argument("--tag", type=str, default="", help="suffix for checkpoint/log filenames, e.g. _seed1")
     parser.add_argument("--fold", type=int, default=None, help="K-fold OOF: train on all folds but this one, validate on it")

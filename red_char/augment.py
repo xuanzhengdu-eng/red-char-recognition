@@ -75,6 +75,41 @@ def _draw_red_lines(image: torch.Tensor, n: int) -> torch.Tensor:
     return out.clamp_(0.0, 1.0)
 
 
+def _draw_occlude_lines(image: torch.Tensor, n: int) -> torch.Tensor:
+    """Overlay n thin lines of ARBITRARY colour (mostly non-red / dark) that
+    OVERWRITE pixels on a [3,H,W] image in [0,1].
+
+    Unlike ``_draw_red_lines`` (which adds redness), these simulate the test
+    set's multi-coloured interference lines: a non-red line crossing a red
+    stroke removes the redness there, i.e. it CUTS A GAP in the glyph as seen
+    through the red2 channel. Teaches the recogniser to read a red character
+    whose strokes are broken / crossed by coloured clutter. Colour-preserving in
+    spirit: it does not recolour the target, it occludes it (like a real
+    distractor line drawn on top)."""
+    _, h, w = image.shape
+    out = image.clone()
+    yy = torch.arange(h, dtype=torch.float32).view(h, 1)
+    xx = torch.arange(w, dtype=torch.float32).view(1, w)
+    for _ in range(n):
+        x0, y0 = random.uniform(-5, w + 5), random.uniform(-5, h + 5)
+        ang = random.uniform(0, 3.1416)  # any orientation
+        dx, dy = torch.cos(torch.tensor(ang)), torch.sin(torch.tensor(ang))
+        dist = ((xx - x0) * (-dy) + (yy - y0) * dx).abs()
+        width = random.uniform(0.8, 3.5)  # incl. thick lines like the test clutter
+        mask = (dist <= width).float()
+        # random colour; bias toward NON-red (so it occludes red strokes) and dark
+        roll = random.random()
+        if roll < 0.45:      # non-red coloured (green/blue/purple/cyan/orange...)
+            r = random.uniform(0.0, 0.5); g = random.uniform(0.2, 1.0); b = random.uniform(0.2, 1.0)
+        elif roll < 0.75:    # dark / black line
+            v = random.uniform(0.0, 0.35); r = g = b = v
+        else:                # any colour incl. occasional reddish
+            r = random.uniform(0.0, 1.0); g = random.uniform(0.0, 1.0); b = random.uniform(0.0, 1.0)
+        colour = torch.tensor([r, g, b]).view(3, 1, 1)
+        out = out * (1 - mask) + colour * mask
+    return out.clamp_(0.0, 1.0)
+
+
 class TrainAugment:
     """On-the-fly geometric + light additive-noise augmentation.
 
@@ -98,10 +133,22 @@ class TrainAugment:
         red_line_p: float = 0.0,
         cutout_p: float = 0.0,
         faint_p: float = 0.0,
+        render_p: float = 0.0,
+        occlude_p: float = 0.0,
     ) -> None:
         self.red_line_p = red_line_p
         self.cutout_p = cutout_p
         self.faint_p = faint_p
+        # Probability of arbitrary-colour occluding lines (test-like clutter that
+        # cuts gaps in the red strokes); the lever found by inspecting the real
+        # low-confidence test images.
+        self.occlude_p = occlude_p
+        # Probability of "render degradation" (extra blur + resolution loss).
+        # Targets the COLOUR head: the platform test set is rendered softer than
+        # training, which weakens a faint stroke's redness signal and makes the
+        # red/non-red decision flip. Teaching the colour head that blurred /
+        # low-res red is still red is the lever the glyph reranker cannot touch.
+        self.render_p = render_p
         self.heavy = config.AUG_HEAVY if heavy is None else heavy
         if self.heavy:
             self.translate = config.AUG_H_TRANSLATE if translate is None else translate
@@ -156,11 +203,25 @@ class TrainAugment:
         if self.red_line_p > 0 and float(torch.rand(1)) < self.red_line_p:
             image = _draw_red_lines(image, n=random.randint(1, 5))  # heavier line occlusion
 
+        if self.occlude_p > 0 and float(torch.rand(1)) < self.occlude_p:
+            image = _draw_occlude_lines(image, n=random.randint(2, 6))  # arbitrary-colour clutter
+
         if self.cutout_p > 0 and float(torch.rand(1)) < self.cutout_p:
             image = _cutout(image, n=random.randint(1, 2))
 
         if self.faint_p > 0 and float(torch.rand(1)) < self.faint_p:
             image = _faint_fade(image)
+
+        # Render degradation (colour-preserving): softer rendering than training,
+        # to keep the colour head calibrated on faint / blurred red.
+        if self.render_p > 0 and float(torch.rand(1)) < self.render_p:
+            sigma = float(torch.empty(1).uniform_(0.4, 1.2).item())
+            image = F.gaussian_blur(image, kernel_size=5, sigma=sigma)
+            if float(torch.rand(1)) < 0.6:
+                sf = float(torch.empty(1).uniform_(0.6, 0.9).item())
+                nh, nw = max(8, int(h * sf)), max(8, int(w * sf))
+                image = F.resize(image, [nh, nw], antialias=True)
+                image = F.resize(image, [h, w], antialias=True)
 
         if self.noise_std > 0:
             image = image + torch.randn_like(image) * self.noise_std

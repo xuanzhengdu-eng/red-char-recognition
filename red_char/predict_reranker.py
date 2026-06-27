@@ -22,6 +22,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoints", type=Path, nargs="+", required=True)
     parser.add_argument("--glyph-checkpoints", type=Path, nargs="+", required=True)
+    parser.add_argument("--color-checkpoints", type=Path, nargs="+", default=None,
+                        help="decoupled colour decision: take red/non-red from these (colour-robust) "
+                             "models; char still from --checkpoints + glyph rerank")
     parser.add_argument("--top-k", type=int, default=3)
     parser.add_argument("--alpha", type=float, default=0.25)
     parser.add_argument("--selective", action="store_true")
@@ -41,6 +44,8 @@ def main() -> None:
     loader = DataLoader(dataset, batch_size=256, shuffle=False, num_workers=0, pin_memory=True)
     primary_models = [load_model(path, device) for path in args.checkpoints]
     glyph_models = [load_glyph_model(path, device) for path in args.glyph_checkpoints]
+    color_models = ([load_model(path, device) for path in args.color_checkpoints]
+                    if args.color_checkpoints else None)
 
     ids = []
     labels = []
@@ -67,18 +72,25 @@ def main() -> None:
                     fill=[1.0, 1.0, 1.0],
                 )
             )
+            beta = getattr(args, "conf_beta", 0.0)
             for model in primary_models:
                 char_logits, color_logits = model(shifted)
                 current_char = F.softmax(char_logits, dim=-1)
-                current_color = F.softmax(color_logits, dim=-1)
-                beta = getattr(args, "conf_beta", 0.0)
                 if beta > 0:  # confidence-weighted: let confident models dominate per position
-                    wc = current_char.amax(-1, keepdim=True) ** beta
-                    wk = current_color.amax(-1, keepdim=True) ** beta
-                    current_char = current_char * wc
-                    current_color = current_color * wk
+                    current_char = current_char * current_char.amax(-1, keepdim=True) ** beta
                 char_prob = current_char if char_prob is None else char_prob + current_char
-                color_prob = current_color if color_prob is None else color_prob + current_color
+                if color_models is None:
+                    current_color = F.softmax(color_logits, dim=-1)
+                    if beta > 0:
+                        current_color = current_color * current_color.amax(-1, keepdim=True) ** beta
+                    color_prob = current_color if color_prob is None else color_prob + current_color
+            if color_models is not None:
+                for model in color_models:
+                    _, color_logits = model(shifted)
+                    current_color = F.softmax(color_logits, dim=-1)
+                    if beta > 0:
+                        current_color = current_color * current_color.amax(-1, keepdim=True) ** beta
+                    color_prob = current_color if color_prob is None else color_prob + current_color
         # normalise (per-position sum to 1; works for both uniform and weighted)
         char_prob = char_prob / char_prob.sum(-1, keepdim=True)
         color_prob = color_prob / color_prob.sum(-1, keepdim=True)

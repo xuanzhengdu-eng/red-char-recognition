@@ -81,6 +81,8 @@ def save_checkpoint(
             "val_acc": val_acc,
             "crop_width": model.crop_width,
             "hires": model.hires,
+            "n_pool": model.n_pool,
+            "backbone": model.backbone_type,
             "head_mode": model.head_mode,
             "model_version": ("gap" if model.head_mode == "gap" else "flat") + ("30x32" if model.hires else "15x16"),
             "confusion_loss": confusion_loss,
@@ -97,7 +99,12 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=1.5e-3)
     parser.add_argument("--tag", type=str, default="_g1")
     parser.add_argument("--confusion-loss", action="store_true")
-    parser.add_argument("--input-mode", choices=["rgb", "red", "red2"], default="rgb")
+    parser.add_argument("--input-mode", choices=["rgb", "red", "red2", "binred"], default="rgb")
+    parser.add_argument("--backbone", choices=["se", "dense", "resnet18"], default="se",
+                        help="dense = DenseNet; resnet18 = ImageNet-pretrained ResNet-18 "
+                             "(heterogeneous ensemble members; both need --head-mode gap)")
+    parser.add_argument("--n-pool", type=int, default=None,
+                        help="number of pooling stages (0=keep full 60x64 res; default 1 if --hires else 2)")
     parser.add_argument("--hires", action="store_true",
                         help="keep 30x32 feature map (one less pool) for finer stroke detail")
     parser.add_argument("--head-mode", choices=["flat", "gap"], default="flat",
@@ -111,6 +118,9 @@ def main() -> None:
                         help="probability of cutout occlusion (read partially-covered glyph)")
     parser.add_argument("--faint-aug", type=float, default=0.0,
                         help="prob of faint/uneven-red gradient fade (robustness to light strokes, fixes V->I)")
+    parser.add_argument("--occlude-aug", type=float, default=0.0,
+                        help="prob of arbitrary-colour occluding lines (test-like clutter that cuts gaps "
+                             "in red strokes; targets the line-crossed char confusions seen on real test)")
     parser.add_argument("--crop-width", type=int, default=64,
                         help="glyph crop width; wider gives context to tell lines (span beyond glyph) from strokes")
     parser.add_argument("--boost-chars", type=str, default="",
@@ -135,14 +145,14 @@ def main() -> None:
         train_indices, val_indices = deterministic_split_indices(len(base), config.VAL_RATIO)
     train_ds = GlyphDataset(base, train_indices, red_only=not args.all_glyphs, augment=True,
                             red_line_p=args.red_line_aug, cutout_p=args.cutout, faint_p=args.faint_aug,
-                            crop_width=args.crop_width,
+                            occlude_p=args.occlude_aug, crop_width=args.crop_width,
                             boost_chars=args.boost_chars, boost_factor=args.boost_factor)
     val_ds = GlyphDataset(base, val_indices, red_only=True, augment=False, crop_width=args.crop_width)
     train_loader = make_loader(train_ds, shuffle=True)
     val_loader = make_loader(val_ds, shuffle=False)
 
     model = GlyphNet(input_mode=args.input_mode, hires=args.hires, head_mode=args.head_mode,
-                     crop_width=args.crop_width).to(device)
+                     crop_width=args.crop_width, n_pool=args.n_pool, backbone=args.backbone).to(device)
     # This position-level dataset has far fewer optimizer steps per epoch than
     # the full-image training. A faster EMA avoids carrying random initial
     # weights through most of a short reranker run.
