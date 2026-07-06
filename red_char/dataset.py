@@ -195,6 +195,7 @@ def build_split_datasets(
     augment: bool = config.USE_AUGMENT,
     denoised_dir: Path | None = None,
     red_line_p: float = 0.0,
+    red_line_n: int = 5,
     faint_p: float = 0.0,
     cutout_p: float = 0.0,
     render_p: float = 0.0,
@@ -213,7 +214,8 @@ def build_split_datasets(
         from augment import TrainAugment
 
         train_ds: Dataset = _AugmentedSubset(base, train_indices,
-            TrainAugment(red_line_p=red_line_p, faint_p=faint_p, cutout_p=cutout_p,
+            TrainAugment(red_line_p=red_line_p, red_line_n=red_line_n,
+                         faint_p=faint_p, cutout_p=cutout_p,
                          render_p=render_p, occlude_p=occlude_p))
     else:
         train_ds = Subset(base, train_indices)

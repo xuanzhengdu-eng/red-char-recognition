@@ -246,6 +246,7 @@ def run_training(args: argparse.Namespace) -> None:
         train_ds, val_ds, train_names, val_names, _ = build_split_datasets(
             cache_in_ram=args.cache_in_ram, augment=args.augment, denoised_dir=dn_dir,
             red_line_p=getattr(args, "red_line_aug", 0.0),
+            red_line_n=getattr(args, "red_line_n", 5),
             faint_p=getattr(args, "faint_aug", 0.0), cutout_p=getattr(args, "cutout", 0.0),
             render_p=getattr(args, "render_aug", 0.0),
             occlude_p=getattr(args, "occlude_aug", 0.0),
@@ -334,6 +335,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--full-data", action="store_true", help="near-full-data final retrain (VAL_RATIO->0.01)")
     parser.add_argument("--concat-denoised", action="store_true", help="6ch input: original + denoised (use with --model v2hi6)")
     parser.add_argument("--red-line-aug", type=float, default=0.0, help="prob of overlaying synthetic red lines (robustness)")
+    parser.add_argument("--red-line-n", type=int, default=5, help="max number of red lines to overlay")
     parser.add_argument("--synth-frac", type=float, default=0.0, help="fraction of procedural synthetic samples to mix into training")
     parser.add_argument("--faint-aug", type=float, default=0.0, help="prob of faint/uneven-red gradient fade (robustness)")
     parser.add_argument("--cutout", type=float, default=0.0, help="prob of cutout occlusion (robustness)")

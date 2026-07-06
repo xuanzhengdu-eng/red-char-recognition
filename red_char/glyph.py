@@ -50,6 +50,7 @@ class GlyphDataset(Dataset):
         red_only: bool = True,
         augment: bool = False,
         red_line_p: float = 0.0,
+        red_line_n: int = 5,
         cutout_p: float = 0.0,
         faint_p: float = 0.0,
         occlude_p: float = 0.0,
@@ -73,7 +74,8 @@ class GlyphDataset(Dataset):
                         self.items.append((image_idx, position))
         self.transform = (
             TrainAugment(translate=0.08, scale=(0.94, 1.06), degrees=5.0, noise_std=0.015,
-                         red_line_p=red_line_p, cutout_p=cutout_p, faint_p=faint_p,
+                         red_line_p=red_line_p, red_line_n=red_line_n,
+                         cutout_p=cutout_p, faint_p=faint_p,
                          occlude_p=occlude_p)
             if augment
             else None
@@ -168,7 +170,8 @@ class GlyphNet(nn.Module):
     def __init__(self, dropout: float = 0.2, input_mode: str = "rgb",
                  hires: bool = False, crop_width: int = GLYPH_CROP_WIDTH,
                  head_mode: str = "flat", n_pool: int | None = None,
-                 backbone: str = "se") -> None:
+                 backbone: str = "se",
+                 widths: tuple[int, ...] = (48, 96, 192, 256)) -> None:
         super().__init__()
         if input_mode not in {"rgb", "red", "red2", "binred"}:
             raise ValueError(f"unknown glyph input mode: {input_mode}")
@@ -181,7 +184,7 @@ class GlyphNet(nn.Module):
         self.crop_width = crop_width
         self.head_mode = head_mode
         self.backbone_type = backbone
-        widths = (48, 96, 192, 256)
+        self.widths = widths
         # n_pool overrides hires: number of leading stages that downsample.
         # n_pool=0 keeps full 60x64 resolution (max detail; needs GAP head).
         if n_pool is None:
@@ -293,7 +296,8 @@ def load_glyph_model(checkpoint: Path, device: torch.device, use_ema: bool = Tru
                      head_mode=payload.get("head_mode", "flat"),
                      crop_width=payload.get("crop_width", GLYPH_CROP_WIDTH),
                      n_pool=payload.get("n_pool", None),
-                     backbone=payload.get("backbone", "se")).to(device)
+                     backbone=payload.get("backbone", "se"),
+                     widths=payload.get("widths", (48, 96, 192, 256))).to(device)
     state = payload.get("ema_state_dict") if use_ema else None
     model.load_state_dict(state if state is not None else payload["state_dict"])
     model.eval()

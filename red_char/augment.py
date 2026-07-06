@@ -131,12 +131,14 @@ class TrainAugment:
         fill: float = 1.0,
         heavy: bool | None = None,
         red_line_p: float = 0.0,
+        red_line_n: int = 5,
         cutout_p: float = 0.0,
         faint_p: float = 0.0,
         render_p: float = 0.0,
         occlude_p: float = 0.0,
     ) -> None:
         self.red_line_p = red_line_p
+        self.red_line_n = red_line_n
         self.cutout_p = cutout_p
         self.faint_p = faint_p
         # Probability of arbitrary-colour occluding lines (test-like clutter that
@@ -201,7 +203,7 @@ class TrainAugment:
             image = F.gaussian_blur(image, kernel_size=5, sigma=sigma)
 
         if self.red_line_p > 0 and float(torch.rand(1)) < self.red_line_p:
-            image = _draw_red_lines(image, n=random.randint(1, 5))  # heavier line occlusion
+            image = _draw_red_lines(image, n=random.randint(1, self.red_line_n))
 
         if self.occlude_p > 0 and float(torch.rand(1)) < self.occlude_p:
             image = _draw_occlude_lines(image, n=random.randint(2, 6))  # arbitrary-colour clutter

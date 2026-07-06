@@ -86,6 +86,7 @@ def save_checkpoint(
             "head_mode": model.head_mode,
             "model_version": ("gap" if model.head_mode == "gap" else "flat") + ("30x32" if model.hires else "15x16"),
             "confusion_loss": confusion_loss,
+            "widths": model.widths,
             "input_mode": model.input_mode,
         },
         path,
@@ -114,6 +115,8 @@ def main() -> None:
                              "validation stays red-only (the deployment metric)")
     parser.add_argument("--red-line-aug", type=float, default=0.0,
                         help="probability of overlaying synthetic RED lines (robustness to residual red lines)")
+    parser.add_argument("--red-line-n", type=int, default=5,
+                        help="max number of red lines per glyph crop")
     parser.add_argument("--cutout", type=float, default=0.0,
                         help="probability of cutout occlusion (read partially-covered glyph)")
     parser.add_argument("--faint-aug", type=float, default=0.0,
@@ -123,6 +126,8 @@ def main() -> None:
                              "in red strokes; targets the line-crossed char confusions seen on real test)")
     parser.add_argument("--crop-width", type=int, default=64,
                         help="glyph crop width; wider gives context to tell lines (span beyond glyph) from strokes")
+    parser.add_argument("--widths", type=int, nargs=4, default=(48, 96, 192, 256),
+                        help="channel widths for the 4 SE stages (default: 48 96 192 256)")
     parser.add_argument("--boost-chars", type=str, default="",
                         help="characters to oversample in training, e.g. I1LVZT (vertical-stroke group)")
     parser.add_argument("--boost-factor", type=int, default=1, help="oversample multiplier for --boost-chars")
@@ -144,7 +149,8 @@ def main() -> None:
     else:
         train_indices, val_indices = deterministic_split_indices(len(base), config.VAL_RATIO)
     train_ds = GlyphDataset(base, train_indices, red_only=not args.all_glyphs, augment=True,
-                            red_line_p=args.red_line_aug, cutout_p=args.cutout, faint_p=args.faint_aug,
+                            red_line_p=args.red_line_aug, red_line_n=getattr(args, 'red_line_n', 5),
+                            cutout_p=args.cutout, faint_p=args.faint_aug,
                             occlude_p=args.occlude_aug, crop_width=args.crop_width,
                             boost_chars=args.boost_chars, boost_factor=args.boost_factor)
     val_ds = GlyphDataset(base, val_indices, red_only=True, augment=False, crop_width=args.crop_width)
@@ -152,7 +158,8 @@ def main() -> None:
     val_loader = make_loader(val_ds, shuffle=False)
 
     model = GlyphNet(input_mode=args.input_mode, hires=args.hires, head_mode=args.head_mode,
-                     crop_width=args.crop_width, n_pool=args.n_pool, backbone=args.backbone).to(device)
+                      crop_width=args.crop_width, n_pool=args.n_pool, backbone=args.backbone,
+                      widths=tuple(args.widths)).to(device)
     # This position-level dataset has far fewer optimizer steps per epoch than
     # the full-image training. A faster EMA avoids carrying random initial
     # weights through most of a short reranker run.
